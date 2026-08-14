@@ -1,0 +1,36 @@
+{
+  "name": "dsh-codeui",
+  "version": "1.0.0",
+  "description": "VSCode 风格代码变更查看器 / VSCode-style code-change viewer for DeepSeek Harness: 文件资源管理器、绿红代码差异面板、对话右移 / file explorer, green/red diff panel, chat on the right.",
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "ui",
+    "code-diff",
+    "vscode",
+    "chat",
+    "file-explorer",
+    "ai-coding"
+  ],
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "host.js",
+    "client.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YLingHao/dsh-codeui.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YLingHao/dsh-codeui/issues"
+  },
+  "homepage": "https://github.com/YLingHao/dsh-codeui#readme",
+  "author": "YLingHao",
+  "scripts": {},
+  "dependencies": {}
+}
