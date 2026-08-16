@@ -1,0 +1,7 @@
+# dsh-codeui bundle patch: register the package as one Cordis row.
+# Use this file automatically when dsh-codeui is listed in
+# `dsh.profile.bundles`, or merge the same insert below into your profile /
+# home cordis.patch.yml when installing the package manually.
+- insert:
+    - id: codeui
+      name: 'dsh-codeui'

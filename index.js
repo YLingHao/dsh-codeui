@@ -7,8 +7,10 @@
  * dynamic plugin tool (`cordis_define`) consumes. Each file's top-level
  * `return { ... }` is the body of a function that produces a Cordis Plugin:
  *
- *   - host.js   -> Host half  (filesystem RPC: listDir / readFile / workspaceRoot)
- *   - client.js -> Client half (explorer overlay, diff panel, chat-right reorder)
+ *   - host.js   -> Host half  (filesystem RPC: listDir / readFile / workspaceRoot,
+ *                 plus read-only Git RPC: gitStatus / gitDiff)
+ *   - client.js -> Client half (explorer + Git badges, per-turn split diff,
+ *                 turn snapshots, always-on jump rail, chat-right reorder)
  *
  * To install through the harness UI, submit these two bodies to `cordis_define`
  * (or paste them as the `code.host` / `code.client` of a Cordis Package). See
@@ -16,8 +18,8 @@
  */
 module.exports = {
   name: 'codeui',
-  version: '1.0.0',
-  description: 'VSCode-style code-change viewer for DeepSeek Harness (file explorer + green/red diff panel + chat on the right).',
+  version: '2.12.0',
+  description: 'P0 code-review workbench for DeepSeek Harness: file explorer + Git badges + per-turn split diff + turn snapshots + always-on turn jump rail + read-only patch export.',
   license: 'MIT',
   sources: {
     host: './host.js',

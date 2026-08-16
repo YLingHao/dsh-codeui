@@ -1,151 +1,265 @@
-# Code UI (codeui)
+# dsh-codeui (Code UI)
 
-> VSCode 风格的代码变更查看器，把 DeepSeek Harness 变成「编辑器 + 对话助手」的工作台。
-> A VSCode-style code-change viewer that turns DeepSeek Harness into an IDE-like workbench.
+> DeepSeek Harness 代码审阅工作台：像看 GitHub PR 一样，按轮查看 AI 改过哪些文件、具体改了什么，并从右侧轮次轨道一键跳回对应的对话现场。
+>
+> A code-review workbench for DeepSeek Harness: inspect every file an agent changed in each turn with a side-by-side diff, and jump from an always-on turn rail straight back to that turn in the conversation.
 
-[中文文档](#中文) · [English](#english)
+[中文](#中文) · [English](#english)
 
 ---
 
 <a id="中文"></a>
+
 ## 中文
 
-### 简介
+### 项目简介
 
-Code UI 是一个 DeepSeek Harness 的 **Cordis 动态插件**，把界面改造成 VSCode 式三栏工作台：
+`dsh-codeui`（内部名 `codeui`）是 DeepSeek Harness 的 Cordis UI 插件。它不重做主对话窗口，而是补齐代码审阅场景最需要的三块：
 
-| 位置 | 内容 |
-| --- | --- |
-| 最左侧 | 可点击切换、弹出/隐藏的 **资源管理器**（当前工作区的文件夹/文件树） |
-| 中间 | **标签式代码编辑器**：显示智能体编辑过的文件差异，**绿色 = 新增行，红色 = 删除行，灰色/黑色 = 未变更行** |
-| 右侧 | **对话窗口**（右移，就像 VSCode 靠右的对话助手），左边界可拖动调整宽度 |
+- **工作区资源管理器**：文件树 + 只读 Git 状态标记（M / A / D / R / U / !）、分支和领先/落后信息。
+- **按轮切换的代码差异面板**：列出本轮修改的文件，支持分栏/统一 diff，可查看每个文件在“改前 / 改后 / 当前”的完整内容，并支持只读累计 `git diff HEAD` 和导出 patch。
+- **右侧常驻轮次跳转轨道**：固定显示 10 个轮次点；悬停查看该轮用户提问；点击任意轮次会跳转到对应提问行。目标轮次尚未加载时，插件会自动向上滚动对话、自动点击“加载更早”，直到目标轮次进入当前会话窗口后再定位高亮。
 
-### 功能特性
+### 功能亮点
 
-- **资源管理器**（左侧抽屉）：浏览当前工作目录，点击文件夹展开、点击文件在中间打开为新标签页。
-- **连续全文件差异**：中间面板渲染一份连续的文件视图（行号不重排），对比基准为「上一回合修改后的完整代码」——第一次新建文件时全文标绿；后续修改只把改动的行标绿/标红，其余保持灰色上下文。
-- **横向标签栏**：所有打开的文件以标签横排于顶部，点击切换、点 `×` 关闭单个文件；被智能体修改的文件自动加入标签页。
-- **执行中自动跳转**：任务运行期间，中间面板优先跳到「正在编辑」的文件并实时显示差异。
-- **对话窗口可调宽度**：右移后的对话窗口左边界可拖动（300–520px），输入框下方状态文字自动换行为两行，权限/模型选择框在窄列下自动分行不重叠。
-- **设置页**：`设置 → Code UI` 提供三个开关（显示资源管理器 / 显示代码变更面板 / 对话右移·代码居中）。
-- **插件管理**：作为 Cordis 动态插件，自动出现在 `设置 → 插件` 列表中，可停用 / 更新 / 删除。
+- 支持 `write`、`edit` 和 `str_replace_editor`（`create` / `str_replace` / `insert`）的修改捕获。
+- Diff 面板和轨道共享全量轮次历史，轮次选择器始终显示所有轮次。
+- 双栏 diff 分界线可拖动（5%–95%），大文件自动降级为前缀/后缀块算法。
+- 对话右移、资源管理器、Git 标记均可独立开关。
+- 插件语言支持“跟随系统 / 简体中文 / English”。
+- 全部 Git 操作均为只读，不写入、不提交、不切换分支。
 
-### 安装（动态插件）
+### 安装（静态插件，推荐）
 
-在 DeepSeek Harness 中使用 `cordis_define` 新建插件：
+本仓库同时是 npm 包 `dsh-codeui`，静态插件只需在 DSH web profile 中安装并注册一次，无需使用 `cordis_define`。
 
-1. `kind: "new"`，`idPrefix: "codeui"`（Host 会分配最终 id，如 `codeui-1`）。
+#### 第 1 步：安装包
+
+```bash
+dsh plugin --profile web add github:YLingHao/dsh-codeui
+```
+
+也可以手动安装：
+
+```bash
+cd "$DSH_HOME/profiles/web"
+pnpm add github:YLingHao/dsh-codeui
+```
+
+#### 第 2 步：注册插件（二选一）
+
+**方式 A：作为 bundle 注册**（本仓库自带 `cordis.patch.yml`）
+
+编辑 `$DSH_HOME/profiles/web/package.json`，在 `dsh.profile.bundles` 末尾加入 `dsh-codeui`：
+
+```json
+{
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "dsh-codeui"
+      ]
+    }
+  }
+}
+```
+
+**方式 B：写入 patch 层**（适合不想改 bundles 的现有 profile）
+
+编辑 `$DSH_HOME/profiles/web/cordis.patch.yml`（或全局 `$DSH_HOME/cordis.patch.yml`），加入：
+
+```yaml
+- insert:
+    - id: codeui
+      name: 'dsh-codeui'
+```
+
+#### 第 3 步：重启
+
+```bash
+dsh web
+```
+
+浏览器打开后建议 Ctrl+F5 强制刷新。若已安装 `dsh-market`，也可以直接在市场中搜索安装；本仓库的 GitHub Topics 建议添加 `dsh-plugin`。
+
+### 安装（动态 Cordis 插件）
+
+旧版动态安装方式仍然可用，适合不能使用 npm 包的场景：
+
+1. 在 DeepSeek Harness 中使用 `cordis_define` 新建插件：`kind: "new"`，`idPrefix: "codeui"`。
 2. `code.host` 填入 `host.js` 的内容，`code.client` 填入 `client.js` 的内容。
 3. 在界面批准运行（单勾 = 本次版本，双勾 = 未来版本自动放行）。
 
-运行后：左下角出现 📁 按钮切换资源管理器；开始会话后中间自动打开代码变更面板，对话窗口移动到最右。
+`host.js` / `client.js` 与 `lib/` 下的静态版本功能同步；静态包是推荐安装方式。
+
+### 使用
+
+- 左下角 📁 按钮切换资源管理器。
+- 会话开始且 AI 修改文件后，代码差异面板自动打开；关闭后保持关闭，直到下一轮新修改。
+- 右侧轨道始终常驻：轮次点与提问行在同一滚动容器内，固定显示 10 个点；点击未加载的旧轮次时，对话会自动上滚并连续加载更早历史，最后定位到目标提问并高亮。
+- 差异面板顶部轮次选择器显示完整历史轮次，可切换、上一步/下一步。
+- 设置页（`设置 → Code UI`）可关闭/开启资源管理器、差异面板、对话右移、Git 标记，并切换插件语言。
+
+### Git 权限说明
+
+插件只执行只读命令：
+
+```bash
+git rev-parse --show-toplevel
+git -c core.quotepath=false -c diff.renames=false status --porcelain=v1 -z --branch
+git -c core.quotepath=false diff --no-ext-diff --unified=3 HEAD -- .
+```
+
+Git 不可用时自动降级：隐藏状态标记，patch 导出显示提示。
 
 ### 文件结构
 
 ```
-codeui/
-├── package.json   # npm 元数据
-├── index.js       # 包清单（说明 host/client 两半的对应关系）
-├── host.js        # Host 半边：文件系统 RPC（listDir / readFile / workspaceRoot）
-├── client.js      # Client 半边：资源管理器、标签式 diff 编辑器、对话右移、设置页
-├── LICENSE        # MIT
-└── README.md
+dsh-codeui/
+├── package.json        # npm 包清单（含 dsh.client / dsh.bundle.patch）
+├── cordis.patch.yml    # bundle 自注册 patch（静态安装方式 A）
+├── index.js            # 动态插件包清单（host.js + client.js 对应关系）
+├── host.js             # 动态 Host 半边（function body）
+├── client.js           # 动态 Client 半边（function body）
+├── lib/
+│   ├── index.js        # 静态 Host：webServer 路由 /codeui/api/*
+│   └── client.js       # 静态 Client bundle（dsh.client）
+├── README.md
+└── LICENSE
 ```
 
-`host.js` 与 `client.js` 都是纯 JavaScript 的 **Cordis "function body"** 源码（顶层 `return { ... }` 即函数体），零依赖、无 import/require/JSX/TypeScript。
+### 设计边界
 
-### 架构说明
-
-| 关注点 | 位置 | 依赖的接口 |
-| --- | --- | --- |
-| 目录列举 / 读文件 / 工作区根 | `host.js` | `fs` 服务、`sandboxPolicy.workspaceRoot`、`harness.handle` |
-| diff 数据来源 | `client.js` | 会话日志中 `edit`/`write` 的调用参数（`content` / `old_string` / `new_string`），按回合重建完整文件内容后对比 |
-| 资源管理器 | `client.js` | `shell.overlay`（左侧抽屉）+ `sidebar.footer.action`（切换按钮）+ `useWorkspaces` |
-| 代码变更面板 | `client.js` | `details` 槽（右列，`ctx.layout.openDetails()` 自动打开）+ `useSession` |
-| 对话右移 / 宽度可调 | `client.js` | CSS `order` 重排 + 保留框架自带拖拽手柄 |
-| 设置页 | `client.js` | `settings.section` 槽（`id: 'codeui'`） |
-
-### 设计取舍
-
-- **不替换 `sidebar` 槽**：该槽内含设置面板与插件列表，替换会破坏「在设置里管理插件」的能力。资源管理器因此用 `shell.overlay` 做成加法式左侧抽屉。
-- **对话右移的范围**：CSS 重排用 `:not([data-details-collapsed])` 限定，仅在「代码面板已打开（有会话）」时生效；无会话时对话保持在中间，避免空白列。
-- **类名依赖**：`REORDER_CSS` 使用了当前构建 `ui-layout` 的带哈希类名（`pI_x6G_*`），这是布局重排的唯一耦合点，已隔离在 `REORDER_CSS` 常量中并可通过设置一键关闭。
-
-### 移植为正式 Web 插件
-
-若要脱离动态插件机制、作为常驻 Web 插件打包：把 `host.js`/`client.js` 的两个函数体分别接入 Host 与 Client 的 `apply(ctx)`，并按 `dsh.client` 的扫描/打包规则注册模块。核心逻辑（diff 重建、资源管理器、CSS 重排）无需改动。
+- 主对话窗口、工具调用和批准日志由 harness 自身提供，本插件不重复实现。
+- “每轮快照”由浏览器端根据会话日志中的编辑工具参数重建：AI 修改过的文件可精确回看；未修改过的文件显示当前磁盘内容。全量 Git 快照、代码标记/留言、AI 辅助审查属于后续计划。
 
 ---
 
 <a id="english"></a>
+
 ## English
 
 ### Introduction
 
-Code UI is a **Cordis dynamic plugin** for DeepSeek Harness that reshapes the UI into a VSCode-style three-column workbench:
+`dsh-codeui` (internal plugin id `codeui`) is a Cordis UI plugin for DeepSeek Harness. It keeps the native chat untouched and adds a code-review workflow around it:
 
-| Area | Content |
-| --- | --- |
-| Far left | Toggleable **file explorer** (folder/file tree of the current workspace) |
-| Middle | **Tabbed code editor**: shows diffs of the files the agent edited — **green = added, red = deleted, gray/black = unchanged** |
-| Right | **Chat panel** (moved to the right, like VSCode's right-side assistant), with a draggable left edge |
+- **Workspace explorer** — file tree with read-only Git badges (M / A / D / R / U / !), branch and ahead/behind information.
+- **Per-turn diff panel** — changed-file list for each turn, split or unified diff, `before / after / current` full-file views, and a read-only cumulative `git diff HEAD` with patch export.
+- **Always-on turn rail** — 10 turn dots pinned to the right; hover to preview the turn's user question; click any turn to jump back to that question in the chat. If the target turn is not loaded yet, the plugin auto-scrolls the conversation up, keeps clicking "Load earlier" until the turn is loaded, then scrolls to and highlights the question.
 
-### Features
+### Highlights
 
-- **File explorer** (left drawer): browse the working directory, expand folders, click a file to open it as a new tab in the middle.
-- **Continuous full-file diff**: the middle panel renders ONE continuous file view (line numbers never restart). The reference is the full content after the *previous turn* — a newly created file shows all green; later edits mark only the changed lines green/red with the rest as neutral context.
-- **Horizontal tab bar**: all open files are tabs at the top; click to switch, `×` to close. Files the agent edits are added automatically.
-- **Auto-focus while running**: during a task the middle panel jumps to the file currently being edited and shows its diff live.
-- **Resizable chat panel**: drag the chat's left edge (300–520px); the status line below the input wraps to two lines; the access-mode and model selects wrap onto separate rows so they never overlap.
-- **Settings page**: `Settings → Code UI` offers three toggles (show explorer / show diff panel / move chat right).
-- **Plugin management**: as a Cordis dynamic plugin it appears in `Settings → Plugins` where it can be stopped, updated, or removed.
+- Captures edits from `write`, `edit`, and `str_replace_editor` (`create` / `str_replace` / `insert`).
+- The turn selector and the rail always see the full session turn history.
+- Draggable split divider (5%–95%); large-file diffs degrade gracefully.
+- Explorer, diff panel, chat-reorder and Git badges can be toggled independently.
+- UI language: auto / Simplified Chinese / English.
+- Git access is strictly read-only.
 
-### Installation (dynamic plugin)
+### Install (static package, recommended)
 
-In DeepSeek Harness, use `cordis_define` to create the plugin:
+This repository is also the npm package `dsh-codeui`. Install it into the DSH `web` profile and register it once — no `cordis_define` needed.
 
-1. `kind: "new"` with `idPrefix: "codeui"` (the Host allocates the final id, e.g. `codeui-1`).
-2. Put the contents of `host.js` into `code.host` and the contents of `client.js` into `code.client`.
-3. Approve the run in the UI (single check = this version, double check = future versions auto-approved).
+#### Step 1: install the package
 
-After activation: the 📁 button at the bottom-left toggles the explorer; starting a session opens the code panel in the middle and moves the chat to the right.
-
-### Project structure
-
-```
-codeui/
-├── package.json   # npm metadata
-├── index.js       # package manifest (maps host/client halves)
-├── host.js        # Host half: filesystem RPC (listDir / readFile / workspaceRoot)
-├── client.js      # Client half: explorer, tabbed diff editor, chat reorder, settings
-├── LICENSE        # MIT
-└── README.md
+```bash
+dsh plugin --profile web add github:YLingHao/dsh-codeui
 ```
 
-`host.js` and `client.js` are plain-JavaScript **Cordis "function body"** sources (the top-level `return { ... }` is the function body), with zero dependencies and no import/require/JSX/TypeScript.
+Or manually:
 
-### Architecture
+```bash
+cd "$DSH_HOME/profiles/web"
+pnpm add github:YLingHao/dsh-codeui
+```
 
-| Concern | Where | Interfaces used |
-| --- | --- | --- |
-| Directory listing / file read / workspace root | `host.js` | `fs` service, `sandboxPolicy.workspaceRoot`, `harness.handle` |
-| Diff data | `client.js` | `edit`/`write` call arguments from the session log (`content` / `old_string` / `new_string`), replayed per turn to reconstruct full file contents |
-| File explorer | `client.js` | `shell.overlay` (left drawer) + `sidebar.footer.action` (toggle) + `useWorkspaces` |
-| Code-diff panel | `client.js` | `details` slot (right column, auto-opened via `ctx.layout.openDetails()`) + `useSession` |
-| Chat right / resizable | `client.js` | CSS `order` reorder + the frame's built-in drag handle |
-| Settings page | `client.js` | `settings.section` slot (`id: 'codeui'`) |
+#### Step 2: register the plugin (choose one)
 
-### Design notes
+**Option A: register as a bundle** (uses this repo's `cordis.patch.yml`)
 
-- **The `sidebar` slot is deliberately NOT replaced**: it hosts the Settings panel and the plugin list; replacing it would break plugin management. The explorer is therefore an additive left drawer via `shell.overlay`.
-- **Reorder scope**: the CSS reorder is gated on `:not([data-details-collapsed])`, so it applies only when the code panel is open (a session exists); without a session the chat stays centered.
-- **Hashed class dependency**: `REORDER_CSS` targets the current build's hashed `ui-layout` classes (`pI_x6G_*`) — the single coupling point of the reorder, isolated in the `REORDER_CSS` constant and disableable from Settings.
+Edit `$DSH_HOME/profiles/web/package.json` and append `dsh-codeui` to `dsh.profile.bundles`:
 
-### Porting to a permanent web plugin
+```json
+{
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "dsh-codeui"
+      ]
+    }
+  }
+}
+```
 
-To ship as a permanent web plugin instead of a dynamic one, wire the two function bodies into Host and Client `apply(ctx)` and register the module following the `dsh.client` scan/bundling rules. The core logic (diff reconstruction, explorer, CSS reorder) needs no changes.
+**Option B: register through a patch layer** (best for an existing profile)
 
----
+Edit `$DSH_HOME/profiles/web/cordis.patch.yml` (or the global `$DSH_HOME/cordis.patch.yml`) and add:
+
+```yaml
+- insert:
+    - id: codeui
+      name: 'dsh-codeui'
+```
+
+#### Step 3: restart
+
+```bash
+dsh web
+```
+
+Do a hard refresh (Ctrl+F5) in the browser. If you have `dsh-market` installed, you can also install from its UI; add the GitHub topic `dsh-plugin` to this repository for marketplace discovery.
+
+### Install (dynamic Cordis plugin)
+
+The original dynamic install path is still supported:
+
+1. In DeepSeek Harness, create a plugin with `cordis_define`: `kind: "new"`, `idPrefix: "codeui"`.
+2. Set `code.host` to the contents of `host.js` and `code.client` to the contents of `client.js`.
+3. Approve the run in the UI.
+
+`host.js` / `client.js` stay in sync with the static `lib/` implementation; the static package is the recommended distribution.
+
+### Usage
+
+- Toggle the explorer with the 📁 button in the sidebar footer.
+- The diff panel opens automatically when a new turn edits files and stays closed after a manual close.
+- The rail is always resident: turn dots and question rows share one scroll container and exactly 10 dots are visible. Clicking an unloaded old turn auto-scrolls and loads earlier history until the target question is reached.
+- The turn selector in the diff panel lists every turn in the session.
+- `Settings → Code UI` controls the explorer, diff panel, chat reorder, Git badges, and plugin language.
+
+### Git commands (read-only)
+
+```bash
+git rev-parse --show-toplevel
+git -c core.quotepath=false -c diff.renames=false status --porcelain=v1 -z --branch
+git -c core.quotepath=false diff --no-ext-diff --unified=3 HEAD -- .
+```
+
+When Git is unavailable the plugin degrades silently: badges disappear and patch export reports the limitation.
+
+### Repository layout
+
+```
+dsh-codeui/
+├── package.json        # npm manifest (dsh.client + dsh.bundle.patch)
+├── cordis.patch.yml    # bundle self-registration patch (static install, option A)
+├── index.js            # dynamic plugin package manifest (host.js + client.js)
+├── host.js             # dynamic host half (Cordis function body)
+├── client.js           # dynamic client half (Cordis function body)
+├── lib/
+│   ├── index.js        # static host: webServer routes under /codeui/api/*
+│   └── client.js       # static client bundle (dsh.client)
+├── README.md
+└── LICENSE
+```
+
+### Scope
+
+The native conversation, tool-call log, and approval UI stay in the harness. Turn snapshots are reconstructed client-side from edit tool parameters, so agent-edited files can be inspected per turn; untouched files show current disk content. Full Git-level snapshots, inline comments, and AI-assisted review are future work.
 
 ## License
 
