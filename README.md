@@ -31,7 +31,7 @@
 
 ### 安装（静态插件，推荐）
 
-本仓库同时是 npm 包 `dsh-codeui`，静态插件只需在 DSH web profile 中安装并注册一次，无需使用 `cordis_define`。
+本仓库按 npm 包规范组织，包名为 `dsh-codeui`。下面的安装命令直接从 GitHub 安装，**不需要先注册或发布到 npm registry**；只有希望用户直接执行 `npm install dsh-codeui`（短名安装）时，才需要把它发布到 npm。
 
 #### 第 1 步：安装包
 
@@ -160,7 +160,7 @@ dsh-codeui/
 
 ### Install (static package, recommended)
 
-This repository is also the npm package `dsh-codeui`. Install it into the DSH `web` profile and register it once — no `cordis_define` needed.
+This repository is organized as an npm package named `dsh-codeui`. The commands below install it straight from GitHub — **no npm registry registration or publication is required**. Publishing to npm is only needed if you want users to run `npm install dsh-codeui` by short name.
 
 #### Step 1: install the package
 
