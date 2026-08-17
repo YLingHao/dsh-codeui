@@ -18,7 +18,7 @@
  */
 module.exports = {
   name: 'codeui',
-  version: '2.14.4',
+  version: '2.14.5',
   description: 'DeepSeek Harness code-review workbench: per-turn Review cards, right-side resizable Review panel, and turn jump rail.',
   license: 'MIT',
   sources: {
