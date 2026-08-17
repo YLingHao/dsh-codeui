@@ -18,8 +18,8 @@
  */
 module.exports = {
   name: 'codeui',
-  version: '2.13.0',
-  description: 'P0 code-review workbench for DeepSeek Harness: file explorer + Git badges + per-turn split diff + turn snapshots + always-on turn jump rail + read-only patch export.',
+  version: '2.14.0',
+  description: 'DeepSeek Harness code-review workbench: per-turn Review cards, right-side resizable Review panel, and turn jump rail.',
   license: 'MIT',
   sources: {
     host: './host.js',

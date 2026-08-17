@@ -67,6 +67,8 @@ const state = {
   selectedTurn: null,    // null = follow latest; otherwise an exact turn number
   detailsManuallyClosed: false,
   turnView: null,        // { sessionId, turns, latestTurn, running, lastClosedTurn }
+  turnFiles: {},         // turn -> { turn, files: [{ path, added, removed }], added, removed }
+  turnFilesSessionId: '',
   workspaceRoot: '',
   git: { available: null, branch: '', upstream: null, ahead: 0, behind: 0, repoRoot: '', entries: [], error: null },
   railNotice: null,
@@ -118,7 +120,7 @@ const STRINGS = {
     explorer_empty: '目录为空',
     explorer_loading: '加载中…',
     divider_drag: '拖动调整两栏宽度',
-    diff_title: '代码变更',
+    diff_title: 'Review',
     diff_running: '执行中',
     diff_risk_title: '本轮回看时请优先检查这些文件',
     diff_prev: '上一轮',
@@ -152,6 +154,8 @@ const STRINGS = {
     diff_turn_before: '第 {n} 轮修改前',
     diff_turn_after: '第 {n} 轮修改后',
     diff_current_disk: '当前磁盘内容',
+    review_card_edited: 'Edited {n} files',
+    review_card_button: 'Review',
     diff_turn_suffix: '（第 {n} 轮）',
     diff_added: '新增',
     diff_removed: '删除',
@@ -161,9 +165,9 @@ const STRINGS = {
     diff_preview: '文件预览',
     diff_no_content: '该文件暂无内容。',
     settings_title: 'Code UI',
-    settings_desc: '代码审阅工作台：最左侧资源管理器（含只读 Git 状态标记）、中间双栏代码差异面板（按轮切换，可查看改前/改后/当前完整文件）、右侧常驻轮次快速跳转轨道（悬停查看问题，点击跳回对话）。',
+    settings_desc: '代码审阅工作台：最左侧资源管理器（含只读 Git 状态标记）、中间 Review 面板（按轮查看代码差异，默认单栏、可切换双栏）、右侧常驻轮次快速跳转轨道（悬停查看问题，点击跳回对话）。',
     settings_show_explorer: '显示资源管理器',
-    settings_show_diff: '显示代码变更面板',
+    settings_show_diff: '显示 Review 面板',
     settings_reorder: '对话右移 / 代码居中',
     settings_show_git: '显示 Git 状态标记',
     settings_language: '插件语言',
@@ -210,7 +214,7 @@ const STRINGS = {
     explorer_empty: 'Folder is empty',
     explorer_loading: 'Loading…',
     divider_drag: 'Drag to resize columns',
-    diff_title: 'Code changes',
+    diff_title: 'Review',
     diff_running: 'Running',
     diff_risk_title: 'Review these files first for this turn',
     diff_prev: 'Previous turn',
@@ -244,6 +248,8 @@ const STRINGS = {
     diff_turn_before: 'Turn {n} before',
     diff_turn_after: 'Turn {n} after',
     diff_current_disk: 'Current disk content',
+    review_card_edited: 'Edited {n} files',
+    review_card_button: 'Review',
     diff_turn_suffix: ' (turn {n})',
     diff_added: 'added',
     diff_removed: 'deleted',
@@ -253,9 +259,9 @@ const STRINGS = {
     diff_preview: 'File preview',
     diff_no_content: 'This file has no content.',
     settings_title: 'Code UI',
-    settings_desc: 'Code review workbench: file explorer with read-only Git badges, a per-turn side-by-side diff panel with before/after/current views, and an always-on turn jump rail with hover previews.',
+    settings_desc: 'Code review workbench: file explorer with read-only Git badges, a central Review panel with per-turn unified/split diffs, and an always-on turn jump rail with hover previews.',
     settings_show_explorer: 'Show explorer',
-    settings_show_diff: 'Show code-diff panel',
+    settings_show_diff: 'Show Review panel',
     settings_reorder: 'Move chat right / code centered',
     settings_show_git: 'Show Git status badges',
     settings_language: 'Plugin language',
@@ -985,6 +991,58 @@ function runningEditPaths(snapshot) {
   return list
 }
 
+// ---------- per-turn review card summary ----------
+function opLineDelta(op) {
+  if (!op) return { added: 0, removed: 0 }
+  if (op.op === 'write') return { added: countLines(op.content || ''), removed: 0 }
+  if (op.op === 'edit') return { added: countLines(op.newStr || ''), removed: countLines(op.oldStr || '') }
+  if (op.op === 'insert') return { added: countLines(op.text || ''), removed: 0 }
+  return { added: 0, removed: 0 }
+}
+function buildTurnFileSummary(filesMap) {
+  const byTurn = new Map()
+  for (const entry of filesMap) {
+    const path = entry[0]
+    const f = entry[1]
+    if (!f || !Array.isArray(f.ops)) continue
+    for (const op of f.ops) {
+      if (!op || typeof op.turn !== 'number') continue
+      const d = opLineDelta(op)
+      if (!d.added && !d.removed) continue
+      let cell = byTurn.get(op.turn)
+      if (!cell) { cell = { files: new Map(), added: 0, removed: 0 }; byTurn.set(op.turn, cell) }
+      let row = cell.files.get(path)
+      if (!row) { row = { path: path, added: 0, removed: 0 }; cell.files.set(path, row) }
+      row.added += d.added
+      row.removed += d.removed
+      cell.added += d.added
+      cell.removed += d.removed
+    }
+  }
+  const out = {}
+  for (const entry of byTurn) {
+    const turn = entry[0]
+    const cell = entry[1]
+    const files = Array.from(cell.files.values())
+    files.sort(function (a, b) {
+      return ((b.added + b.removed) - (a.added + a.removed)) || String(a.path).localeCompare(String(b.path))
+    })
+    out[turn] = { turn: turn, files: files, added: cell.added, removed: cell.removed }
+  }
+  return out
+}
+function reviewDisplayPath(path, root) {
+  const p = normPath(path)
+  const r = normPath(root || '')
+  if (r && p.indexOf(r + '/') === 0) {
+    const rel = p.slice(r.length + 1)
+    const parts = r.split('/')
+    const base = parts[parts.length - 1]
+    return base ? base + '/' + rel : rel
+  }
+  return p
+}
+
 // ---------- Git state / patch export ----------
 function loadGitStatus(root) {
   if (!root || !state.settings.showGit) { patchState({ git: { available: null, branch: '', upstream: null, ahead: 0, behind: 0, repoRoot: '', entries: [], error: null } }); return }
@@ -1289,6 +1347,209 @@ function chooseTurn(turnNumber, model, shouldJump) {
 
 
 
+// ---------- turn-tail review card ----------
+function openReviewTurn(turnNumber) {
+  patchState({
+    selectedTurn: turnNumber,
+    detailsManuallyClosed: false,
+    railNotice: null,
+    settings: Object.assign({}, state.settings, { showDiff: true }),
+  })
+  if (layoutRef && typeof layoutRef.openDetails === 'function') layoutRef.openDetails()
+}
+function openReviewFile(turnNumber, path) {
+  openReviewTurn(turnNumber)
+  addFileTab(path)
+}
+function selectTurnReviewCard(owner) {
+  let turnNumber = null
+  try {
+    if (owner && typeof owner.turn === 'number') turnNumber = owner.turn
+    else if (owner && owner.turn && typeof owner.turn.turn === 'number') turnNumber = owner.turn.turn
+  } catch (e) {}
+  if (turnNumber == null) return null
+  // Always match so the component mounts and subscribes to the shared state;
+  // the live summary may only be published just after the turn-tail renders.
+  return { turn: turnNumber }
+}
+function TurnReviewCard(props) {
+  const shared = useShared()
+  const matched = props.matched
+  const turnNumber = matched && typeof matched.turn === 'number' ? matched.turn : null
+  if (turnNumber == null) return null
+  const sessionOk = shared.turnFilesSessionId && shared.turnView && shared.turnFilesSessionId === shared.turnView.sessionId
+  const summary = sessionOk ? (shared.turnFiles && shared.turnFiles[turnNumber]) : null
+  if (!summary || !Array.isArray(summary.files) || summary.files.length === 0) return null
+  const rows = summary.files.map(function (f) {
+    return h('div', {
+      key: f.path,
+      className: 'codeui-turn-review-file',
+      title: f.path,
+      onClick: function () { openReviewFile(summary.turn, f.path) },
+    },
+      h('span', { className: 'codeui-turn-review-path' }, reviewDisplayPath(f.path, shared.workspaceRoot)),
+      h('span', { className: 'codeui-turn-review-file-stats' },
+        h('span', { className: 'codeui-turn-review-added' }, '+' + f.added),
+        h('span', { className: 'codeui-turn-review-removed' }, '-' + f.removed)
+      )
+    )
+  })
+  return h('div', {
+    className: 'codeui-turn-review-card',
+    onWheel: function (e) {
+      if (e && e.currentTarget) {
+        const list = e.currentTarget.querySelector('.codeui-turn-review-files')
+        if (list) list.scrollTop += (e.deltaY || 0)
+        if (e.preventDefault) e.preventDefault()
+        if (e.stopPropagation) e.stopPropagation()
+      }
+    },
+  },
+    h('div', { className: 'codeui-turn-review-head' },
+      h('span', { className: 'codeui-turn-review-label' }, tr('review_card_edited', { n: summary.files.length })),
+      h('button', { className: 'codeui-turn-review-button', type: 'button', onClick: function () { openReviewTurn(summary.turn) } }, tr('review_card_button'))
+    ),
+    h('div', { className: 'codeui-turn-review-totals' },
+      h('span', { className: 'codeui-turn-review-added' }, '+' + summary.added),
+      h('span', { className: 'codeui-turn-review-removed' }, '-' + summary.removed)
+    ),
+    h('div', { className: 'codeui-turn-review-files' }, rows)
+  )
+}
+
+// ---------- DOM bridge: keep review cards under every turn tail ----------
+// The turn-tail slot is a chain whose FIRST matching entry wins, so a second
+// chain entry cannot render below the built-in Produced Files row. We instead
+// mount a root-level null component that watches `[data-turn-tail]` nodes and
+// inserts/updates a plain-DOM card right after the produced-files row (or at
+// the tail when that row is absent).
+function reviewSummaryForTurn(turn) {
+  if (!state.turnFilesSessionId || !state.turnView || state.turnFilesSessionId !== state.turnView.sessionId) return null
+  return state.turnFiles && state.turnFiles[turn] || null
+}
+function reviewCardSignature(turn, summary) {
+  return turn + '|' + state.workspaceRoot + '|' + currentLang() + '|' + JSON.stringify(summary)
+}
+function renderReviewCardDom(card, turn, summary) {
+  if (!card || typeof document === 'undefined') return
+  card.textContent = ''
+  card.className = 'codeui-turn-review-card'
+  card.setAttribute('data-codeui-turn', String(turn))
+  const head = document.createElement('div')
+  head.className = 'codeui-turn-review-head'
+  const label = document.createElement('span')
+  label.className = 'codeui-turn-review-label'
+  label.textContent = tr('review_card_edited', { n: summary.files.length })
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'codeui-turn-review-button'
+  button.textContent = tr('review_card_button')
+  button.addEventListener('click', function () { openReviewTurn(turn) })
+  head.appendChild(label)
+  head.appendChild(button)
+  const totals = document.createElement('div')
+  totals.className = 'codeui-turn-review-totals'
+  const totalAdded = document.createElement('span')
+  totalAdded.className = 'codeui-turn-review-added'
+  totalAdded.textContent = '+' + summary.added
+  const totalRemoved = document.createElement('span')
+  totalRemoved.className = 'codeui-turn-review-removed'
+  totalRemoved.textContent = '-' + summary.removed
+  totals.appendChild(totalAdded)
+  totals.appendChild(totalRemoved)
+  const list = document.createElement('div')
+  list.className = 'codeui-turn-review-files'
+  for (const f of summary.files) {
+    const row = document.createElement('div')
+    row.className = 'codeui-turn-review-file'
+    row.title = f.path
+    const pathNode = document.createElement('span')
+    pathNode.className = 'codeui-turn-review-path'
+    pathNode.textContent = reviewDisplayPath(f.path, state.workspaceRoot)
+    const stats = document.createElement('span')
+    stats.className = 'codeui-turn-review-file-stats'
+    const added = document.createElement('span')
+    added.className = 'codeui-turn-review-added'
+    added.textContent = '+' + f.added
+    const removed = document.createElement('span')
+    removed.className = 'codeui-turn-review-removed'
+    removed.textContent = '-' + f.removed
+    stats.appendChild(added)
+    stats.appendChild(removed)
+    row.appendChild(pathNode)
+    row.appendChild(stats)
+    row.addEventListener('click', function () { openReviewFile(turn, f.path) })
+    list.appendChild(row)
+  }
+  card.appendChild(head)
+  card.appendChild(totals)
+  card.appendChild(list)
+  card.onwheel = function (e) {
+    if (e && e.currentTarget) {
+      const files = e.currentTarget.querySelector('.codeui-turn-review-files')
+      if (files) files.scrollTop += (e.deltaY || 0)
+      if (e.preventDefault) e.preventDefault()
+      if (e.stopPropagation) e.stopPropagation()
+    }
+  }
+}
+function syncReviewCardDom() {
+  if (typeof document === 'undefined') return
+  let tails
+  try { tails = document.querySelectorAll('[data-turn-tail]') } catch (e) { return }
+  for (const tail of tails) {
+    let turn = Number(tail.getAttribute('data-turn-tail'))
+    if (!Number.isFinite(turn)) continue
+    const summary = reviewSummaryForTurn(turn)
+    const producedRow = tail.querySelector('[data-produced-files-row]')
+    let anchor = null
+    if (producedRow && producedRow.parentElement && producedRow.parentElement !== tail) anchor = producedRow.parentElement
+    let card = tail.querySelector('[data-codeui-review-card]')
+    if (!summary || !Array.isArray(summary.files) || summary.files.length === 0) {
+      if (card) card.remove()
+      continue
+    }
+    const sig = reviewCardSignature(turn, summary)
+    if (card && card.getAttribute('data-codeui-signature') === sig) continue
+    if (!card) {
+      card = document.createElement('div')
+      card.setAttribute('data-codeui-review-card', '')
+      if (anchor) anchor.insertAdjacentElement('afterend', card)
+      else tail.appendChild(card)
+    } else if (anchor && card.parentElement !== anchor.parentElement) {
+      card.remove()
+      anchor.insertAdjacentElement('afterend', card)
+    } else if (!anchor && card.parentElement !== tail) {
+      card.remove()
+      tail.appendChild(card)
+    }
+    card.setAttribute('data-codeui-signature', sig)
+    renderReviewCardDom(card, turn, summary)
+  }
+}
+function ReviewCardDomBridge() {
+  const shared = useShared()
+  React.useEffect(function () {
+    let observer = null
+    let timer = null
+    if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(function () { syncReviewCardDom() })
+      observer.observe(document.body, { childList: true, subtree: true })
+    }
+    if (typeof setInterval === 'function') timer = setInterval(function () { syncReviewCardDom() }, 700)
+    return function () {
+      if (observer) observer.disconnect()
+      if (timer != null) clearInterval(timer)
+    }
+  }, [])
+  React.useEffect(function () {
+    syncReviewCardDom()
+  }, [shared.turnFiles, shared.turnFilesSessionId, shared.workspaceRoot, shared.settings.language])
+  return null
+}
+
+
+
 // ---------- styles ----------
 const BASE_CSS = `
 .codeui-explorer-toggle{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#666);font-size:15px}
@@ -1404,7 +1665,7 @@ const BASE_CSS = `
 
 .codeui-rail{position:absolute;right:14px;top:0;bottom:0;width:34px;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;background:transparent;z-index:30}
 .codeui-rail-body{pointer-events:auto;display:flex;flex-direction:column;align-items:center;width:34px;border-radius:12px;transition:width .15s ease,background .15s ease,box-shadow .15s ease}
-.codeui-rail-expanded .codeui-rail-body{width:364px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));box-shadow:var(--dsw-shadow-lv2,0 8px 28px rgba(0,0,0,.16))}
+.codeui-rail-expanded .codeui-rail-body{width:242px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));box-shadow:var(--dsw-shadow-lv2,0 8px 28px rgba(0,0,0,.16))}
 .codeui-rail-handle{flex:none;height:18px;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-secondary,#999);font-size:11px;cursor:default}
 .codeui-rail-list{box-sizing:border-box;width:100%;height:281px;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:5px;padding:8px 0;scrollbar-width:none}
 .codeui-rail-list::-webkit-scrollbar{display:none}
@@ -1412,20 +1673,20 @@ const BASE_CSS = `
 .codeui-rail-turnrow:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}
 .codeui-rail-turnrow-selected{background:rgba(47,129,247,.10)}
 .codeui-rail-question{width:0;opacity:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px;line-height:22px;color:var(--dsw-alias-label-primary,#222);cursor:pointer;transition:width .15s ease,opacity .15s ease}
-.codeui-rail-expanded .codeui-rail-question{width:330px;opacity:1;padding:0 8px}
-.codeui-rail-node{position:relative;flex:none;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:50%;color:var(--dsw-alias-label-secondary,#888)}
-.codeui-rail-node:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.08));color:var(--dsw-alias-label-primary,#222)}
+.codeui-rail-expanded .codeui-rail-question{width:208px;opacity:1;padding:0 8px}
+.codeui-rail-node{position:relative;flex:none;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;color:var(--dsw-alias-label-tertiary,#aaa)}
+.codeui-rail-node:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.08));color:#111}
 .codeui-rail-node-selected{background:rgba(47,129,247,.16);color:#2f81f7}
-.codeui-rail-dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.55}
-.codeui-rail-node-user .codeui-rail-dot{width:8px;height:8px;opacity:.75}
-.codeui-rail-node-auto .codeui-rail-dot{width:5px;height:5px;opacity:.4}
-.codeui-rail-node-selected .codeui-rail-dot{width:9px;height:9px;opacity:1}
-.codeui-rail-node-running .codeui-rail-dot{background:#2f81f7;opacity:1;animation:codeui-pulse 1.1s ease-in-out infinite}
-@keyframes codeui-pulse{0%,100%{transform:scale(.85);opacity:.45}50%{transform:scale(1.15);opacity:1}}
-.codeui-rail-node-error .codeui-rail-dot{background:#f85149;opacity:.95;width:9px;height:9px}
-.codeui-rail-node-warning .codeui-rail-dot{background:#d29922;opacity:.95}
-.codeui-rail-node-risk{position:absolute;right:1px;top:1px;width:6px;height:6px;border-radius:50%;background:#f85149}
-.codeui-rail-card{position:fixed;right:390px;transform:translateY(-50%);width:280px;max-height:78vh;overflow:hidden;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));border-radius:12px;box-shadow:var(--dsw-shadow-lv2,0 8px 28px rgba(0,0,0,.16));padding:10px 12px;text-align:left;cursor:default;pointer-events:none;z-index:50}
+.codeui-rail-line{display:block;width:10px;border-radius:2px;background:currentColor}
+.codeui-rail-line-thin{height:1.5px;opacity:.5}
+.codeui-rail-line-thick{height:2.5px;opacity:.7}
+.codeui-rail-node:hover .codeui-rail-line{background:#111;opacity:1}
+.codeui-rail-node-selected .codeui-rail-line{width:12px;opacity:1;background:#2f81f7}
+.codeui-rail-node-running .codeui-rail-line{background:#2f81f7;opacity:1;animation:codeui-pulse 1.1s ease-in-out infinite}
+@keyframes codeui-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+.codeui-rail-node-error .codeui-rail-line{background:#f85149;opacity:.95}
+.codeui-rail-node-warning .codeui-rail-line{background:#d29922;opacity:.95}
+.codeui-rail-card{position:fixed;right:390px;transform:translateY(-50%);width:210px;max-height:78vh;overflow:hidden;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14));border-radius:12px;box-shadow:var(--dsw-shadow-lv2,0 8px 28px rgba(0,0,0,.16));padding:10px 12px;text-align:left;cursor:default;pointer-events:none;z-index:50}
 .codeui-rail-card-head{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,#222);margin-bottom:5px}
 .codeui-rail-card-status{font-size:10px;font-weight:400;border-radius:8px;padding:1px 7px;color:var(--dsw-alias-label-secondary,#777);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.14))}
 .codeui-rail-card-status-running{color:#2f81f7;border-color:rgba(47,129,247,.4)}
@@ -1433,6 +1694,20 @@ const BASE_CSS = `
 .codeui-rail-card-title{font-size:12px;line-height:1.55;color:var(--dsw-alias-label-primary,#222);word-break:break-word;white-space:normal;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
 .codeui-rail-card-meta{font-size:11px;color:var(--dsw-alias-label-secondary,#777);margin-top:6px;display:flex;gap:10px;flex-wrap:wrap}
 .codeui-rail-card-risk{color:#f85149}
+.codeui-turn-review-card{margin-top:8px;width:100%;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.08));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);padding:8px 10px;color:var(--dsw-alias-label-primary,#222);font-size:12px}
+.codeui-turn-review-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.codeui-turn-review-label{font-weight:600;white-space:nowrap}
+.codeui-turn-review-button{flex:none;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.16));background:var(--dsw-alias-bg-layer-1,#fff);color:#2f81f7;border-radius:7px;padding:2px 10px;font-size:12px;cursor:pointer}
+.codeui-turn-review-button:hover{background:rgba(47,129,247,.08)}
+.codeui-turn-review-totals{display:flex;gap:14px;margin:5px 0 6px;font-weight:600}
+.codeui-turn-review-added{color:#2ea043}
+.codeui-turn-review-removed{color:#f85149}
+.codeui-turn-review-files{display:flex;flex-direction:column;max-height:44px;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;border-top:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.06));padding-top:3px}
+.codeui-turn-review-files::-webkit-scrollbar{display:none}
+.codeui-turn-review-file{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:21px;padding:0 4px;border-radius:5px;cursor:pointer}
+.codeui-turn-review-file:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.05))}
+.codeui-turn-review-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--dsw-alias-label-primary,#222)}
+.codeui-turn-review-file-stats{flex:none;display:flex;gap:10px;font-variant-numeric:tabular-nums}
 .codeui-rail-empty{position:absolute;right:0;top:0;bottom:0;width:34px;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-secondary,#999);font-size:11px;pointer-events:auto}
 .codeui-rail-latest{position:absolute;right:4px;bottom:18px;width:24px;height:24px;pointer-events:auto;border-radius:50%;border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.2));background:var(--dsw-alias-button-floating-fill,#fff);color:#2f81f7;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:var(--dsw-shadow-lv2,0 4px 14px rgba(0,0,0,.14))}
 .codeui-rail-latest:hover{background:var(--dsw-alias-button-floating-hover,#f5f5f5)}
@@ -1745,6 +2020,7 @@ function ExplorerToggle() {
 function TurnSync(props) {
   const snap = props.useSession ? props.useSession(function (s) { return s }) : null
   const filesMap = React.useMemo(function () { return collectFiles(snap) }, [snap])
+  const turnFiles = React.useMemo(function () { return buildTurnFileSummary(filesMap) }, [filesMap])
   const model = React.useMemo(function () { return buildTurnModel(snap, filesMap) }, [snap, filesMap])
   const sessionId = snap ? snap.sessionId : ''
   const [history, setHistory] = React.useState(null)
@@ -1767,6 +2043,9 @@ function TurnSync(props) {
   React.useEffect(function () {
     publishTurnView(merged)
   }, [merged])
+  React.useEffect(function () {
+    patchState({ turnFiles: turnFiles, turnFilesSessionId: sessionId })
+  }, [turnFiles, sessionId])
   return null
 }
 
@@ -1804,7 +2083,7 @@ function JumpRail(props) {
     )
   }
 
-  const turnRows = turns.map(function (t) {
+  const turnRows = turns.map(function (t, idx) {
     const isLatest = t.turn === latestTurn
     const isSelected = (selected != null && t.turn === selected) || (selected == null && isLatest)
     const nodeCls = 'codeui-rail-node' +
@@ -1814,7 +2093,6 @@ function JumpRail(props) {
       (t.status === 'error' ? ' codeui-rail-node-error' : '') +
       (t.status === 'warning' ? ' codeui-rail-node-warning' : '')
     const rowCls = 'codeui-rail-turnrow' + (isSelected ? ' codeui-rail-turnrow-selected' : '')
-    const risk = t.risk && t.risk.level !== 'none'
     return h('div', {
       key: t.turn,
       className: rowCls,
@@ -1839,8 +2117,7 @@ function JumpRail(props) {
         onMouseLeave: function () { setRowHover(function (prev) { return prev && prev.turn === t.turn ? null : prev }) },
       }, t.userTitle || t.title || tr('turn_no_question')),
       h('div', { className: nodeCls, title: tr('turn_label', { n: t.turn }) },
-        h('span', { className: 'codeui-rail-dot' }),
-        risk ? h('span', { className: 'codeui-rail-node-risk', title: (t.risk.reasons || []).join('；') }) : null
+        h('span', { className: 'codeui-rail-line ' + (idx % 2 === 0 ? 'codeui-rail-line-thin' : 'codeui-rail-line-thick') })
       )
     )
   })
@@ -1896,13 +2173,15 @@ function DiffPanel(props) {
   const turnModel = (shared.turnView && snap && shared.turnView.sessionId === snap.sessionId) ? shared.turnView : rawTurnModel
   const [diffs, setDiffs] = React.useState(versionCache.maps || {})
   const [diffLoading, setDiffLoading] = React.useState({})
-  const [viewMode, setViewMode] = React.useState('split')
+  const [viewMode, setViewMode] = React.useState('unified')
   const [filesOpen, setFilesOpen] = React.useState(true)
   const [patchMsg, setPatchMsg] = React.useState(null)
   const [cumulative, setCumulative] = React.useState(null)
   const [cumLoading, setCumLoading] = React.useState(false)
   const [splitRatio, setSplitRatio] = React.useState(0.5)
-  const lastAutoOpenSig = React.useRef('')
+  const lastAutoOpenSession = React.useRef(null)
+  const lastAutoOpenTime = React.useRef(0)
+  const lastAutoTurnSession = React.useRef(null)
 
   // Reset the raw cumulative patch view when switching sessions.
   React.useEffect(function () {
@@ -1925,22 +2204,34 @@ function DiffPanel(props) {
     publishTurnView(rawTurnModel)
   }, [rawTurnModel])
 
-  // A new turn means the user gets a fresh chance to auto-open the panel.
+  // A new turn in the SAME session gives a fresh chance to auto-open the
+  // panel. Switching sessions must never reset or open anything.
   React.useEffect(function () {
+    const sid = snap && snap.sessionId
+    if (!sid) return
+    if (lastAutoTurnSession.current !== sid) { lastAutoTurnSession.current = sid; return }
     patchState({ detailsManuallyClosed: false })
   }, [snap && snap.sessionId, turnModel.latestTurn])
 
-  // Auto-open the code panel and focus the most recently edited file when a
-  // new write/edit arrives. A manual close stays closed until the next turn.
+  // Auto-open the Review panel only when a NEW edit arrives in the current
+  // session (detected by a newer operation time). Loading older history and
+  // switching sessions do not increase the latest edit time, so they never
+  // auto-open the panel.
   React.useEffect(function () {
-    const sig = versionSignature(filesMap)
-    if (sig && sig !== lastAutoOpenSig.current) {
-      lastAutoOpenSig.current = sig
-      if (shared.settings.showDiff && !shared.detailsManuallyClosed && layoutRef) layoutRef.openDetails()
-      const latest = latestEditedPath(filesMap)
+    const sid = snap && snap.sessionId
+    const latest = latestEditedPath(filesMap)
+    const latestTime = latest && filesMap.get(latest) ? (filesMap.get(latest).lastTime || 0) : 0
+    if (!sid) { lastAutoOpenSession.current = null; lastAutoOpenTime.current = 0; return }
+    if (lastAutoOpenSession.current !== sid) {
+      lastAutoOpenSession.current = sid
+      lastAutoOpenTime.current = latestTime
       if (latest) focusTab(latest)
-    } else if (!sig) {
-      lastAutoOpenSig.current = ''
+      return
+    }
+    if (latest && latestTime > lastAutoOpenTime.current) {
+      lastAutoOpenTime.current = latestTime
+      if (shared.settings.showDiff && !shared.detailsManuallyClosed && layoutRef) layoutRef.openDetails()
+      focusTab(latest)
     }
   }, [filesMap])
 
@@ -2222,8 +2513,8 @@ function DiffPanel(props) {
       turnSelect,
       h('button', { className: 'codeui-btn', onClick: function () { stepTurn(1) }, disabled: turnModel.turns.length < 2 || effectiveTurn == null, title: tr('diff_next') }, '\u203a'),
       h('span', { className: 'codeui-seg' },
-        h('button', { className: 'codeui-seg-btn' + (viewMode === 'split' ? ' codeui-seg-on' : ''), onClick: function () { setViewMode('split') } }, tr('diff_view_split')),
         h('button', { className: 'codeui-seg-btn' + (viewMode === 'unified' ? ' codeui-seg-on' : ''), onClick: function () { setViewMode('unified') } }, tr('diff_view_unified')),
+        h('button', { className: 'codeui-seg-btn' + (viewMode === 'split' ? ' codeui-seg-on' : ''), onClick: function () { setViewMode('split') } }, tr('diff_view_split')),
         h('button', { className: 'codeui-seg-btn' + (viewMode === 'before' ? ' codeui-seg-on' : ''), onClick: function () { setViewMode('before') } }, tr('diff_view_before')),
         h('button', { className: 'codeui-seg-btn' + (viewMode === 'after' ? ' codeui-seg-on' : ''), onClick: function () { setViewMode('after') } }, tr('diff_view_after')),
         h('button', { className: 'codeui-seg-btn' + (viewMode === 'current' ? ' codeui-seg-on' : ''), onClick: function () { setViewMode('current') } }, tr('diff_view_current'))
@@ -2295,8 +2586,9 @@ function LayoutSync() {
     let last = state.settings.showDiff
     function sync() {
       if (!layoutRef) return
-      if (last) layoutRef.openDetails()
-      else layoutRef.closeDetails()
+      // Only close when the user disables the panel. Enabling it must NOT
+      // auto-open the Review panel.
+      if (!last) layoutRef.closeDetails()
     }
     sync()
     return subscribe(function () {
@@ -2332,6 +2624,7 @@ return {
     // Always-resident right jump rail (root overlay; independent of details).
     slots.inject('shell.overlay', function () { return slots.register({ name: 'shell.overlay', id: 'codeui-layout-sync', order: -100 }, LayoutSync) })
     slots.inject('shell.overlay', function () { return slots.register({ name: 'shell.overlay', id: 'codeui-jump-rail', order: 60, label: function () { return tr('slot_rail') } }, JumpRail) })
+    slots.inject('shell.overlay', function () { return slots.register({ name: 'shell.overlay', id: 'codeui-review-dom', order: 61 }, ReviewCardDomBridge) })
 
     // Session-scoped null collector that keeps the rail fed with turn data.
     slots.inject('conversation.session.header.utilities', function () { return slots.register({ name: 'conversation.session.header.utilities', id: 'codeui-turn-sync', order: 100, label: function () { return tr('slot_turn_sync') } }, TurnSync) })
@@ -2340,7 +2633,7 @@ return {
     slots.inject('sidebar.footer.action', function () { return slots.register({ name: 'sidebar.footer.action', id: 'codeui-explorer-toggle', order: 0, label: function () { return tr('slot_explorer') } }, ExplorerToggle) })
     // `details` is a single slot; use a lower priority to shadow the built-in
     // registration without colliding with its default priority 0.
-    slots.inject('details', function () { return slots.register({ name: 'details', priority: -100 }, DiffPanel) })
+    slots.inject('details', function () { return slots.register({ name: 'details', priority: -100, label: function () { return tr('diff_title') } }, DiffPanel) })
     slots.inject('settings.section', function () { return slots.register({ name: 'settings.section', id: 'codeui', order: 100, label: function () { return tr('slot_settings') } }, CodeUISettings) })
   },
 }
