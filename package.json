@@ -1,6 +1,6 @@
 {
   "name": "dsh-codeui",
-  "version": "2.12.0",
+  "version": "2.13.0",
   "description": "P0 code-review workbench for DeepSeek Harness: 工作区文件树 + Git 状态标记、按轮切换的双栏 diff、每轮快照浏览、右侧常驻轮次快速跳转轨道、只读累计 patch 导出 / file tree with Git badges, per-turn split diff, turn snapshots, always-on turn jump rail, read-only patch export.",
   "type": "module",
   "main": "lib/index.js",

@@ -25,13 +25,45 @@ const h = React.createElement
 let layoutRef = null
 let sessionsService = null
 
+// ---------- settings persistence ----------
+const SETTINGS_STORAGE_KEY = 'dsh-codeui.settings.v1'
+const DEFAULT_SETTINGS = { showExplorer: true, showDiff: true, reorderLayout: true, showGit: true, language: 'auto' }
+function loadStoredSettings() {
+  const next = Object.assign({}, DEFAULT_SETTINGS)
+  try {
+    if (typeof localStorage === 'undefined') return next
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY)
+    if (!raw) return next
+    const saved = JSON.parse(raw)
+    if (!saved || typeof saved !== 'object') return next
+    if (typeof saved.showExplorer === 'boolean') next.showExplorer = saved.showExplorer
+    if (typeof saved.showDiff === 'boolean') next.showDiff = saved.showDiff
+    if (typeof saved.reorderLayout === 'boolean') next.reorderLayout = saved.reorderLayout
+    if (typeof saved.showGit === 'boolean') next.showGit = saved.showGit
+    if (saved.language === 'auto' || saved.language === 'zh-CN' || saved.language === 'en') next.language = saved.language
+  } catch (e) {}
+  return next
+}
+function saveStoredSettings(settings) {
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
+      showExplorer: !!settings.showExplorer,
+      showDiff: !!settings.showDiff,
+      reorderLayout: !!settings.reorderLayout,
+      showGit: !!settings.showGit,
+      language: settings.language === 'zh-CN' || settings.language === 'en' ? settings.language : 'auto',
+    }))
+  } catch (e) {}
+}
+
 // ---------- shared in-memory state (process-local, per skill guidance) ----------
 const state = {
   explorerOpen: false,
   tabs: [],              // [{ path, content, loading, error, auto, lastTime }]
   activePath: null,      // selected tab path
   dismissed: new Map(),  // path -> lastTime at dismissal (changed files the user closed)
-  settings: { showExplorer: true, showDiff: true, reorderLayout: true, showGit: true, language: 'auto' },
+  settings: loadStoredSettings(), // persisted to localStorage on every change
   selectedTurn: null,    // null = follow latest; otherwise an exact turn number
   detailsManuallyClosed: false,
   turnView: null,        // { sessionId, turns, latestTurn, running, lastClosedTurn }
@@ -42,7 +74,7 @@ const state = {
 const listeners = new Set()
 function notify() { for (const fn of Array.from(listeners)) { try { fn() } catch (e) {} } }
 function subscribe(fn) { listeners.add(fn); return function () { listeners.delete(fn) } }
-function patchState(patch) { Object.assign(state, patch); notify() }
+function patchState(patch) { Object.assign(state, patch); if (patch.settings) saveStoredSettings(state.settings); notify() }
 function useShared() {
   const [, force] = React.useState(0)
   React.useEffect(function () { return subscribe(function () { force(function (n) { return n + 1 }) }) }, [])
