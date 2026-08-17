@@ -1,6 +1,6 @@
 {
   "name": "dsh-codeui",
-  "version": "2.14.2",
+  "version": "2.14.3",
   "description": "DeepSeek Harness code-review workbench: 每轮 Review 卡片、右侧可调宽 Review 面板、轮次跳转轨道 / per-turn Review cards, right-side resizable Review panel, and turn jump rail.",
   "type": "module",
   "main": "lib/index.js",
