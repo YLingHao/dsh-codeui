@@ -4,7 +4,7 @@
 >
 > A code-review workbench for DeepSeek Harness: inspect every file an agent changed in each turn with a side-by-side diff, and jump from an always-on turn rail straight back to that turn in the conversation.
 
-[中文](#中文) · [English](#english)
+[中文](#中文) | [English](#english)
 
 ---
 
